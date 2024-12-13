@@ -1,0 +1,178 @@
+---
+- hosts: all
+  become: yes
+
+  tasks:
+    # Instalar paquetes necesarios
+    - name: Instalar paquetes necesarios
+      apt:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - git
+        - nginx
+        - openssl
+        - ufw
+        - curl
+        - gnupg
+        - apache2-utils  # Instalar ApacheBench
+
+    # Instalar Netdata
+    - name: Instalar Netdata
+      shell: |
+        curl -sSL https://my-netdata.io/kickstart.sh | bash -s -- --dont-wait
+      args:
+        creates: /usr/sbin/netdata
+
+    # Crear directorio para el sitio web
+    - name: Crear directorio para el sitio web
+      file:
+        path: /var/www/mrm/html
+        state: directory
+        owner: www-data
+        group: www-data
+        mode: '0755'
+
+    # Copiar archivos del sitio web
+    - name: Copiar archivos del sitio web
+      copy:
+        src: files/
+        dest: /var/www/mrm/html/
+        owner: www-data
+        group: www-data
+        mode: '0644'
+
+    # Copiar configuración de Nginx
+    - name: Copiar configuración de Nginx
+      copy:
+        src: mrm
+        dest: /etc/nginx/sites-available/mrm
+
+    # Configurar Nginx para URL de Ngrok
+    - name: Configurar Nginx para URL de Ngrok
+      lineinfile:
+        path: /etc/nginx/sites-available/mrm
+        regexp: '^server_name\s+.*;$'
+        line: '  server_name brave-anchovy-roughly.ngrok-free.app;'
+      notify: Reload Nginx
+
+    # Habilitar configuración de Nginx
+    - name: Habilitar configuración de Nginx
+      file:
+        src: /etc/nginx/sites-available/mrm
+        dest: /etc/nginx/sites-enabled/mrm
+        state: link
+
+    # Crear certificados SSL
+    - name: Crear certificados SSL
+      command: >
+        openssl req -x509 -nodes -days 365
+        -newkey rsa:2048
+        -keyout /etc/ssl/private/mrm.key
+        -out /etc/ssl/certs/mrm.crt
+        -subj "/C=ES/ST=Andalucía/L=Granada/O=IZV/OU=WEB/CN=mrm/emailAddress=webmaster@mrm.com"
+
+    # Reiniciar Nginx
+    - name: Reiniciar Nginx
+      service:
+        name: nginx
+        state: restarted
+
+    # Configurar firewall
+    - name: Configurar firewall
+      ufw:
+        rule: allow
+        name: "{{ item }}"
+      loop:
+        - OpenSSH
+        - 'Nginx Full'
+
+    # Añadir clave de Ngrok
+    - name: Añadir clave de ngrok
+      apt_key:
+        url: https://ngrok-agent.s3.amazonaws.com/ngrok.asc
+        state: present
+
+    # Añadir repositorio de Ngrok
+    - name: Añadir repositorio de ngrok
+      apt_repository:
+        repo: "deb https://ngrok-agent.s3.amazonaws.com buster main"
+        state: present
+
+    # Instalar Ngrok
+    - name: Instalar ngrok
+      apt:
+        name: ngrok
+        state: present
+
+    # Crear directorio para configuración de Ngrok
+    - name: Crear directorio para configuración de ngrok
+      file:
+        path: /home/vagrant/.ngrok2
+        state: directory
+        mode: '0700'
+        owner: vagrant
+        group: vagrant
+
+    # Copiar archivo de configuración de Ngrok
+    - name: Copiar archivo de configuración de Ngrok
+      copy:
+        src: files/ngrok.yml
+        dest: /home/vagrant/.ngrok2/ngrok.yml
+        owner: vagrant
+        group: vagrant
+        mode: '0644'
+
+    # Crear servicio systemd para Ngrok
+    - name: Crear servicio systemd para Ngrok
+      copy:
+        dest: /etc/systemd/system/ngrok.service
+        content: |
+          [Unit]
+          Description=Ngrok Tunnel Service
+          After=network.target
+
+          [Service]
+          ExecStart=/usr/local/bin/ngrok start --config /home/vagrant/.ngrok2/ngrok.yml --all
+          User=vagrant
+          Group=vagrant
+          Restart=always
+          RestartSec=3
+
+          [Install]
+          WantedBy=multi-user.target
+        mode: '0644'
+
+    # Recargar systemd para registrar el nuevo servicio
+    - name: Recargar systemd para registrar el servicio
+      systemd:
+        daemon_reload: yes
+
+    # Habilitar e iniciar el servicio de Ngrok
+    - name: Habilitar e iniciar el servicio de Ngrok
+      systemd:
+        name: ngrok
+        enabled: yes
+        state: started
+
+    # Configuración de autenticación HTTP básica para Nginx
+    - name: Configurar autenticación HTTP básica
+      block:
+        - name: Crear archivo de autenticación para admin
+          shell: |
+            echo -n 'admin:' > /etc/nginx/.htpasswd_admin
+            openssl passwd -apr1 'asir' >> /etc/nginx/.htpasswd_admin
+
+        - name: Crear archivo de autenticación para status
+          shell: |
+            echo -n 'sysadmin:' > /etc/nginx/.htpasswd_status
+            openssl passwd -apr1 'risa' >> /etc/nginx/.htpasswd_status
+
+     
+
+
+  handlers:
+    - name: Reload Nginx
+      service:
+        name: nginx
+        state: reloaded

@@ -1,0 +1,7 @@
+version: "2"
+authtoken: "2pX8UmNLaXIUi45tCrUWRPtM0sQ_4SRgqD2T9HdYCDnFoPoMR"  # Tu token de Ngrok
+tunnels:
+  http:
+    proto: http
+    addr: 443
+    hostname: brave-anchovy-roughly.ngrok-free.app
